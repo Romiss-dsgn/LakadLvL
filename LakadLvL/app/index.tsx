@@ -1,11 +1,12 @@
 import {
-  Ionicons,
-  MaterialCommunityIcons,
   Feather,
+  Ionicons,
 } from "@expo/vector-icons";
+import { type Session } from "@supabase/supabase-js";
 import { StatusBar } from "expo-status-bar";
-import { useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import {
+  ActivityIndicator,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -15,49 +16,30 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import {
+  calculateHealthScore,
+  ensureProfile,
+  fetchDashboardData,
+  submitDailyCheckin,
+  submitRun,
+} from "@/lib/fitness";
+import { supabase } from "@/lib/supabase";
+import type { Activity, DailyLog, Profile } from "@/lib/types";
+
 type TabKey = "home" | "checkin" | "quests" | "profile";
-
-type UserState = {
-  username: string;
-  hpBase: number;
-  totalXp: number;
-  streak: number;
-  questsDone: number;
-  totalCheckins: number;
-  kmTotal: number;
-};
-
-type CheckinEntry = {
-  dateKey: string;
-  sleepHours: number;
-  waterIntake: number;
-  mood: number;
-  activity: string;
-  activityKm: number;
-  healthScore: number;
-};
+type AuthMode = "sign-in" | "sign-up";
 
 type QuestProgress = {
-  id: string;
-  title: string;
+  completed: boolean;
   description: string;
+  id: string;
   progress: number;
   progressLabel: string;
-  completed: boolean;
+  title: string;
   xp: number;
 };
 
 const TODAY_KEY = new Date().toISOString().slice(0, 10);
-
-const initialUser: UserState = {
-  username: "Remote Ranger",
-  hpBase: 78,
-  totalXp: 140,
-  streak: 3,
-  questsDone: 11,
-  totalCheckins: 5,
-  kmTotal: 18.4,
-};
 
 const getLevel = (xp: number) => Math.floor(xp / 100) + 1;
 const getXpIntoLevel = (xp: number) => xp % 100;
@@ -67,28 +49,9 @@ const getHpColor = (hp: number) => {
   return "#FF7C8A";
 };
 
-const calculateHealthScore = (
-  sleepHours: number,
-  waterIntake: number,
-  mood: number,
-  activityKm: number
-) => {
-  const sleepScore = Math.min((sleepHours / 8) * 100, 100);
-  const waterScore = Math.min((waterIntake / 2) * 100, 100);
-  const moodScore = (mood / 5) * 100;
-  const activityScore = activityKm > 0 ? Math.min((activityKm / 1) * 100, 100) : 60;
-
-  return Math.round(
-    sleepScore * 0.35 +
-      waterScore * 0.3 +
-      moodScore * 0.2 +
-      activityScore * 0.15
-  );
-};
-
-const getQuestProgress = (entry: CheckinEntry | null): QuestProgress[] => {
-  const water = entry?.waterIntake ?? 0;
-  const sleep = entry?.sleepHours ?? 0;
+const getQuestProgress = (entry: DailyLog | null): QuestProgress[] => {
+  const water = entry?.water_intake ?? 0;
+  const sleep = entry?.sleep_hours ?? 0;
   const activityLogged = Boolean(entry?.activity?.trim().length);
 
   return [
@@ -130,22 +93,22 @@ const getQuestReward = (quests: QuestProgress[]) => {
 };
 
 const getAiInsight = (
-  entry: CheckinEntry | null,
+  entry: DailyLog | null,
   displayedHp: number,
   quests: QuestProgress[]
 ) => {
   if (!entry) {
     return {
-      title: "AI Coach Standby",
-      body: "Complete your first check-in and I'll translate your sleep, water, mood, and movement into a recovery plan.",
-      tag: "Awaiting data",
+      title: "Coach Standing By",
+      body: "Complete your first check-in to save today's health log and claim +10 HP on your profile.",
+      tag: "MVP ready",
     };
   }
 
   if (displayedHp < 50) {
     return {
       title: "Recovery Priority",
-      body: "Your HP is under pressure. Push hydration and sleep first, then keep activity light to avoid burning the next streak.",
+      body: "Your HP is running low. Lock in today's check-in early and keep tomorrow's run short so recovery can catch up.",
       tag: "Protect HP",
     };
   }
@@ -153,7 +116,7 @@ const getAiInsight = (
   if (!quests.find((quest) => quest.id === "water")?.completed) {
     return {
       title: "Hydration Gap",
-      body: "Water is the easiest XP on the board today. Finishing that quest also helps stabilize your health score.",
+      body: "Water is the quickest win on the board. Finishing that target improves your health score and clears one daily quest.",
       tag: "Quick win",
     };
   }
@@ -161,16 +124,40 @@ const getAiInsight = (
   if (!quests.find((quest) => quest.id === "sleep")?.completed) {
     return {
       title: "Sleep Debt Alert",
-      body: "You logged below the 7-hour target. Keep tomorrow lighter and aim for an earlier shutdown to recover HP faster.",
+      body: "Your check-in is saved, but your sleep target is still short. Use tonight to set up a stronger score tomorrow.",
       tag: "Tomorrow fix",
     };
   }
 
   return {
     title: "Momentum Locked",
-    body: "All core habits are online. Your next gain comes from repeating the loop tomorrow to preserve streak and level pace.",
+    body: "Your latest log is in good shape. Keep stacking runs for XP while maintaining the check-in streak for steady HP gains.",
     tag: "Chain streak",
   };
+};
+
+const computeStreak = (logs: DailyLog[]) => {
+  if (!logs.length) {
+    return 0;
+  }
+
+  const uniqueDates = Array.from(
+    new Set(logs.map((log) => log.log_date).sort((a, b) => b.localeCompare(a)))
+  );
+  let streak = 0;
+  const cursor = new Date(`${TODAY_KEY}T00:00:00Z`);
+
+  for (const dateKey of uniqueDates) {
+    const currentKey = cursor.toISOString().slice(0, 10);
+    if (dateKey !== currentKey) {
+      break;
+    }
+
+    streak += 1;
+    cursor.setUTCDate(cursor.getUTCDate() - 1);
+  }
+
+  return streak;
 };
 
 function StatCard({
@@ -179,10 +166,10 @@ function StatCard({
   accent,
   suffix,
 }: {
-  label: string;
-  value: string;
   accent: string;
+  label: string;
   suffix?: string;
+  value: string;
 }) {
   return (
     <View style={styles.statCard}>
@@ -219,95 +206,335 @@ function ProgressBar({
   );
 }
 
+function ScreenShell({
+  children,
+  headerRight,
+}: {
+  children: ReactNode;
+  headerRight?: ReactNode;
+}) {
+  return (
+    <SafeAreaView style={styles.safeArea}>
+      <StatusBar style="light" />
+      <View style={styles.screen}>
+        <View style={styles.backgroundGlowTop} />
+        <View style={styles.backgroundGlowBottom} />
+
+        <View style={styles.header}>
+          <View style={styles.brandRow}>
+            <View style={styles.brandIcon}>
+              <Feather name="activity" size={18} color="#06111E" />
+            </View>
+            <View>
+              <Text style={styles.brandName}>LAKADLVL</Text>
+              <Text style={styles.brandSub}>SUPABASE MVP CONNECTED</Text>
+            </View>
+          </View>
+          {headerRight ?? (
+            <View style={styles.headerBadge}>
+              <Ionicons name="sparkles" size={16} color="#C6FF43" />
+            </View>
+          )}
+        </View>
+
+        {children}
+      </View>
+    </SafeAreaView>
+  );
+}
+
 export default function Index() {
   const [activeTab, setActiveTab] = useState<TabKey>("home");
-  const [user, setUser] = useState<UserState>(initialUser);
+  const [authMode, setAuthMode] = useState<AuthMode>("sign-in");
+  const [session, setSession] = useState<Session | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [submittingAuth, setSubmittingAuth] = useState(false);
+  const [dashboardLoading, setDashboardLoading] = useState(false);
+  const [savingCheckin, setSavingCheckin] = useState(false);
+  const [savingRun, setSavingRun] = useState(false);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [activities, setActivities] = useState<Activity[]>([]);
+  const [logs, setLogs] = useState<DailyLog[]>([]);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [username, setUsername] = useState("");
   const [sleepHours, setSleepHours] = useState("6.5");
   const [waterIntake, setWaterIntake] = useState("1.4");
   const [mood, setMood] = useState(3);
-  const [activity, setActivity] = useState("Desk break walk");
-  const [activityKm, setActivityKm] = useState("0.8");
-  const [lastEntry, setLastEntry] = useState<CheckinEntry | null>(null);
+  const [checkinActivity, setCheckinActivity] = useState("Desk break walk");
+  const [checkinKm, setCheckinKm] = useState("0.8");
+  const [runTitle, setRunTitle] = useState("Evening run");
+  const [runDistanceKm, setRunDistanceKm] = useState("2.5");
   const [statusMessage, setStatusMessage] = useState(
-    "No check-in yet today. LakadLvL will apply a -5 HP decay until you log one."
+    "Sign in to sync your profile, runs, and daily logs with Supabase."
   );
 
-  const didCheckInToday = lastEntry?.dateKey === TODAY_KEY;
-  const displayedHp = didCheckInToday ? user.hpBase : Math.max(0, user.hpBase - 5);
-  const quests = useMemo(() => getQuestProgress(lastEntry), [lastEntry]);
+  const user = session?.user ?? null;
+  const latestLog = logs[0] ?? null;
+  const didCheckInToday = latestLog?.log_date === TODAY_KEY;
+  const totalKm = useMemo(
+    () =>
+      activities.reduce((sum, activity) => sum + Number(activity.distance_km ?? 0), 0),
+    [activities]
+  );
+  const streak = useMemo(() => computeStreak(logs), [logs]);
+  const displayedHp = profile?.hp ?? 0;
+  const totalXp = profile?.xp ?? 0;
+  const quests = useMemo(() => getQuestProgress(latestLog), [latestLog]);
   const reward = useMemo(() => getQuestReward(quests), [quests]);
-  const level = getLevel(user.totalXp);
-  const xpIntoLevel = getXpIntoLevel(user.totalXp);
+  const level = getLevel(totalXp);
+  const xpIntoLevel = getXpIntoLevel(totalXp);
   const hpColor = getHpColor(displayedHp);
-  const aiInsight = getAiInsight(lastEntry, displayedHp, quests);
+  const aiInsight = getAiInsight(latestLog, displayedHp, quests);
+  const averageScore =
+    logs.length > 0
+      ? Math.round(
+          logs.reduce((sum, log) => sum + Number(log.health_score ?? 0), 0) / logs.length
+        )
+      : 0;
 
-  const submitCheckin = () => {
+  const loadDashboard = useCallback(async (userId: string) => {
+    setDashboardLoading(true);
+
+    try {
+      const data = await fetchDashboardData(userId);
+      setProfile(data.profile);
+      setActivities(data.activities);
+      setLogs(data.logs);
+      setStatusMessage("Supabase sync complete. Your profile, runs, and check-ins are live.");
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to load dashboard data.";
+      setStatusMessage(message);
+    } finally {
+      setDashboardLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function bootstrapSession() {
+      try {
+        const {
+          data: { session: currentSession },
+        } = await supabase.auth.getSession();
+
+        if (!mounted) {
+          return;
+        }
+
+        setSession(currentSession);
+        setAuthLoading(false);
+
+        if (currentSession?.user) {
+          const nextUsername =
+            (currentSession.user.user_metadata.username as string | undefined) ??
+            currentSession.user.email?.split("@")[0] ??
+            null;
+
+          await ensureProfile(currentSession.user.id, nextUsername);
+          await loadDashboard(currentSession.user.id);
+        }
+      } catch (error) {
+        if (!mounted) {
+          return;
+        }
+
+        const message =
+          error instanceof Error ? error.message : "Unable to restore session.";
+        setAuthLoading(false);
+        setStatusMessage(message);
+      }
+    }
+
+    bootstrapSession();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (_event, nextSession) => {
+      if (!mounted) {
+        return;
+      }
+
+      setSession(nextSession);
+      setAuthLoading(false);
+
+      if (!nextSession?.user) {
+        setProfile(null);
+        setActivities([]);
+        setLogs([]);
+        setStatusMessage("Signed out. Sign back in to keep syncing with Supabase.");
+        return;
+      }
+
+      const nextUsername =
+        (nextSession.user.user_metadata.username as string | undefined) ??
+        nextSession.user.email?.split("@")[0] ??
+        null;
+
+      try {
+        await ensureProfile(nextSession.user.id, nextUsername);
+        await loadDashboard(nextSession.user.id);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Unable to sync signed-in user.";
+        setStatusMessage(message);
+      }
+    });
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, [loadDashboard]);
+
+  const handleAuth = async () => {
+    if (!email.trim() || !password.trim()) {
+      setStatusMessage("Enter an email and password to continue.");
+      return;
+    }
+
+    setSubmittingAuth(true);
+
+    try {
+      if (authMode === "sign-up") {
+        const { error } = await supabase.auth.signUp({
+          email: email.trim(),
+          password,
+          options: {
+            data: {
+              username: username.trim() || email.trim().split("@")[0],
+            },
+          },
+        });
+
+        if (error) {
+          throw error;
+        }
+
+        setStatusMessage(
+          "Account created. If email confirmation is enabled in Supabase, confirm your email before signing in."
+        );
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password,
+        });
+
+        if (error) {
+          throw error;
+        }
+
+        setStatusMessage("Signed in. Pulling your Supabase profile now.");
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Authentication failed.";
+      setStatusMessage(message);
+    } finally {
+      setSubmittingAuth(false);
+    }
+  };
+
+  const handleRunSubmit = async () => {
+    if (!user) {
+      return;
+    }
+
+    const distance = Number.parseFloat(runDistanceKm);
+
+    if (!runTitle.trim() || Number.isNaN(distance) || distance <= 0) {
+      setStatusMessage("Enter a run title and a distance greater than 0 km.");
+      return;
+    }
+
+    setSavingRun(true);
+
+    try {
+      const updatedProfile = await submitRun(user.id, runTitle, distance);
+      setProfile(updatedProfile);
+      await loadDashboard(user.id);
+      setStatusMessage(
+        `Run saved. ${distance.toFixed(1)} km added to activities and +${Math.round(
+          distance * 50
+        )} XP applied through RPC.`
+      );
+      setRunTitle("Next run");
+      setRunDistanceKm("1.0");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to save run.";
+      setStatusMessage(message);
+    } finally {
+      setSavingRun(false);
+    }
+  };
+
+  const handleCheckinSubmit = async () => {
+    if (!user) {
+      return;
+    }
+
     const parsedSleep = Number.parseFloat(sleepHours);
     const parsedWater = Number.parseFloat(waterIntake);
-    const parsedKm = Number.parseFloat(activityKm || "0");
+    const parsedKm = Number.parseFloat(checkinKm || "0");
 
     if (
       Number.isNaN(parsedSleep) ||
       Number.isNaN(parsedWater) ||
       Number.isNaN(parsedKm) ||
-      !activity.trim()
+      !checkinActivity.trim()
     ) {
-      setStatusMessage("Complete sleep, water, activity text, and distance before saving the daily check-in.");
+      setStatusMessage(
+        "Complete sleep, water, activity, and distance before saving the daily check-in."
+      );
       return;
     }
 
-    const healthScore = calculateHealthScore(parsedSleep, parsedWater, mood, parsedKm);
-    const nextEntry: CheckinEntry = {
-      dateKey: TODAY_KEY,
-      sleepHours: parsedSleep,
-      waterIntake: parsedWater,
-      mood,
-      activity: activity.trim(),
-      activityKm: parsedKm,
-      healthScore,
-    };
+    setSavingCheckin(true);
 
-    const nextQuests = getQuestProgress(nextEntry);
-    const nextReward = getQuestReward(nextQuests);
-    const previousReward = didCheckInToday
-      ? getQuestReward(getQuestProgress(lastEntry))
-      : { totalXp: 0, completedCount: 0, bonusXp: 0 };
-    const gainedXp = Math.max(0, nextReward.totalXp - previousReward.totalXp);
-    const nextHpBase = didCheckInToday
-      ? user.hpBase
-      : Math.min(100, Math.max(0, user.hpBase - 5) + 10);
+    try {
+      const result = await submitDailyCheckin(user.id, {
+        sleepHours: parsedSleep,
+        waterIntake: parsedWater,
+        mood,
+        activity: checkinActivity,
+        activityKm: parsedKm,
+      });
 
-    setUser((current) => ({
-      ...current,
-      hpBase: nextHpBase,
-      totalXp: current.totalXp + gainedXp,
-      streak: didCheckInToday ? current.streak : current.streak + 1,
-      questsDone: didCheckInToday
-        ? current.questsDone
-        : current.questsDone + nextReward.completedCount,
-      totalCheckins: didCheckInToday ? current.totalCheckins : current.totalCheckins + 1,
-      kmTotal: didCheckInToday
-        ? current.kmTotal
-        : Number((current.kmTotal + parsedKm).toFixed(1)),
-    }));
-    setLastEntry(nextEntry);
-    setStatusMessage(
-      didCheckInToday
-        ? `Check-in updated. Health score ${healthScore}, additional rewards claimed: +${gainedXp} XP.`
-        : `Check-in saved. HP restored to ${nextHpBase}, health score ${healthScore}, rewards +${nextReward.totalXp} XP.`
-    );
+      setProfile(result.profile);
+      await loadDashboard(user.id);
+      setStatusMessage(
+        result.awardedHp
+          ? `Check-in saved for ${TODAY_KEY}. Health score ${result.latestLog.health_score} and +10 HP applied through RPC.`
+          : `Check-in updated for ${TODAY_KEY}. Health score ${result.latestLog.health_score}. HP was not added twice for the same day.`
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to save daily check-in.";
+      setStatusMessage(message);
+    } finally {
+      setSavingCheckin(false);
+    }
+  };
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
   };
 
   const renderHome = () => (
     <View style={styles.contentStack}>
       <View style={styles.heroCard}>
-        <Text style={styles.heroEyebrow}>Estimated Health Score</Text>
+        <Text style={styles.heroEyebrow}>Health Score Snapshot</Text>
         <View style={styles.scoreFrame}>
-          <Text style={styles.scoreValue}>{lastEntry?.healthScore ?? 72}</Text>
-          <Text style={styles.scoreUnit}>TODAY SCORE</Text>
+          <Text style={styles.scoreValue}>
+            {latestLog?.health_score ?? averageScore ?? 0}
+          </Text>
+          <Text style={styles.scoreUnit}>LATEST SCORE</Text>
         </View>
         <Text style={styles.heroNote}>
-          LakadLvL turns daily habits into survivability. Keep HP alive, stack XP, and protect your streak.
+          Supabase now drives the core loop: Auth signs the player in, runs write to
+          `activities`, check-ins write to `daily_logs`, and RPC functions update HP and XP.
         </Text>
       </View>
 
@@ -321,11 +548,11 @@ export default function Index() {
             </Text>
           </View>
           <ProgressBar progress={displayedHp / 100} tint={hpColor} />
-          {!didCheckInToday ? (
-            <Text style={styles.metricHint}>Decay active until today&apos;s check-in is completed.</Text>
-          ) : (
-            <Text style={styles.metricHint}>Daily recovery secured. Maintain it tomorrow.</Text>
-          )}
+          <Text style={styles.metricHint}>
+            {didCheckInToday
+              ? "Today's check-in is saved."
+              : "No check-in saved for today yet. Submit one to gain +10 HP."}
+          </Text>
         </View>
 
         <View style={[styles.metricCard, styles.metricCardAlt]}>
@@ -334,15 +561,56 @@ export default function Index() {
             <Text style={styles.levelText}>LVL {level}</Text>
           </View>
           <ProgressBar progress={xpIntoLevel / 100} tint="#C6FF43" />
-          <Text style={styles.metricHint}>
-            {xpIntoLevel} / 100 XP to next level
-          </Text>
+          <Text style={styles.metricHint}>{xpIntoLevel} / 100 XP to next level</Text>
         </View>
+      </View>
+
+      <View style={styles.sectionCard}>
+        <View style={styles.sectionHeaderRow}>
+          <Text style={styles.sectionTitle}>RUN TRACKER</Text>
+          <Text style={styles.sectionValue}>50 XP / km</Text>
+        </View>
+        <Text style={styles.sectionDescription}>
+          Complete a run to insert into `activities` and award XP through the Supabase
+          RPC function.
+        </Text>
+
+        <View style={styles.inputBlock}>
+          <Text style={styles.inputLabel}>Run title</Text>
+          <TextInput
+            value={runTitle}
+            onChangeText={setRunTitle}
+            placeholder="Morning run"
+            placeholderTextColor="#657288"
+            style={styles.input}
+          />
+        </View>
+
+        <View style={styles.inputBlock}>
+          <Text style={styles.inputLabel}>Distance (km)</Text>
+          <TextInput
+            value={runDistanceKm}
+            onChangeText={setRunDistanceKm}
+            keyboardType="decimal-pad"
+            placeholder="3.0"
+            placeholderTextColor="#657288"
+            style={styles.input}
+          />
+        </View>
+
+        <Pressable style={styles.primaryButton} onPress={handleRunSubmit} disabled={savingRun}>
+          {savingRun ? (
+            <ActivityIndicator color="#08111E" />
+          ) : (
+            <Ionicons name="walk-outline" size={18} color="#08111E" />
+          )}
+          <Text style={styles.primaryButtonText}>SAVE RUN</Text>
+        </Pressable>
       </View>
 
       <View style={styles.aiCard}>
         <View style={styles.sectionHeaderRow}>
-          <Text style={styles.sectionTitle}>AI COACH</Text>
+          <Text style={styles.sectionTitle}>COACH FEED</Text>
           <View style={styles.aiBadge}>
             <Ionicons name="sparkles" size={14} color="#05111F" />
             <Text style={styles.aiBadgeText}>{aiInsight.tag}</Text>
@@ -350,41 +618,6 @@ export default function Index() {
         </View>
         <Text style={styles.aiTitle}>{aiInsight.title}</Text>
         <Text style={styles.aiBody}>{aiInsight.body}</Text>
-      </View>
-
-      <View style={styles.questPanel}>
-        <View style={styles.sectionHeaderRow}>
-          <Text style={styles.sectionTitle}>ACTIVE QUESTS</Text>
-          <Text style={styles.sectionValue}>
-            {reward.completedCount}/3
-          </Text>
-        </View>
-        {quests.map((quest) => (
-          <View key={quest.id} style={styles.questRow}>
-            <View style={styles.questIconWrap}>
-              <MaterialCommunityIcons
-                name={
-                  quest.id === "water"
-                    ? "water-outline"
-                    : quest.id === "sleep"
-                    ? "weather-night"
-                    : "walk"
-                }
-                size={22}
-                color={quest.completed ? "#C6FF43" : "#8190A6"}
-              />
-            </View>
-            <View style={styles.questMain}>
-              <View style={styles.questTitleRow}>
-                <Text style={styles.questTitle}>{quest.title}</Text>
-                <Text style={styles.questXp}>+{quest.xp} XP</Text>
-              </View>
-              <Text style={styles.questDescription}>{quest.description}</Text>
-              <Text style={styles.questProgressLabel}>{quest.progressLabel}</Text>
-              <ProgressBar progress={quest.progress} tint={quest.completed ? "#45F26A" : "#5C9DFF"} />
-            </View>
-          </View>
-        ))}
       </View>
     </View>
   );
@@ -394,7 +627,8 @@ export default function Index() {
       <View style={styles.sectionCard}>
         <Text style={styles.sectionTitle}>DAILY CHECK-IN</Text>
         <Text style={styles.sectionDescription}>
-          Log sleep, water, mood, and movement once per day to stabilize HP and unlock quest XP.
+          Save one health check-in per day. This writes to `daily_logs` and adds +10 HP
+          through the `add_profile_hp` RPC.
         </Text>
 
         <View style={styles.inputBlock}>
@@ -428,10 +662,7 @@ export default function Index() {
               <Pressable
                 key={value}
                 onPress={() => setMood(value)}
-                style={[
-                  styles.moodChip,
-                  mood === value && styles.moodChipActive,
-                ]}
+                style={[styles.moodChip, mood === value && styles.moodChipActive]}
               >
                 <Text
                   style={[
@@ -449,8 +680,8 @@ export default function Index() {
         <View style={styles.inputBlock}>
           <Text style={styles.inputLabel}>Activity log</Text>
           <TextInput
-            value={activity}
-            onChangeText={setActivity}
+            value={checkinActivity}
+            onChangeText={setCheckinActivity}
             placeholder="Walked after lunch"
             placeholderTextColor="#657288"
             style={styles.input}
@@ -460,8 +691,8 @@ export default function Index() {
         <View style={styles.inputBlock}>
           <Text style={styles.inputLabel}>Activity distance (km)</Text>
           <TextInput
-            value={activityKm}
-            onChangeText={setActivityKm}
+            value={checkinKm}
+            onChangeText={setCheckinKm}
             keyboardType="decimal-pad"
             placeholder="1.0"
             placeholderTextColor="#657288"
@@ -469,8 +700,16 @@ export default function Index() {
           />
         </View>
 
-        <Pressable style={styles.primaryButton} onPress={submitCheckin}>
-          <Ionicons name="flash-outline" size={18} color="#08111E" />
+        <Pressable
+          style={styles.primaryButton}
+          onPress={handleCheckinSubmit}
+          disabled={savingCheckin}
+        >
+          {savingCheckin ? (
+            <ActivityIndicator color="#08111E" />
+          ) : (
+            <Ionicons name="flash-outline" size={18} color="#08111E" />
+          )}
           <Text style={styles.primaryButtonText}>SAVE CHECK-IN</Text>
         </Pressable>
       </View>
@@ -479,7 +718,7 @@ export default function Index() {
         <View style={styles.sectionHeaderRow}>
           <Text style={styles.sectionTitle}>TODAY SNAPSHOT</Text>
           <Text style={styles.sectionValue}>
-            {lastEntry?.healthScore ?? "--"}
+            {latestLog?.health_score ?? calculateHealthScore(6.5, 1.4, 3, 0.8)}
           </Text>
         </View>
         <Text style={styles.summaryText}>{statusMessage}</Text>
@@ -495,7 +734,7 @@ export default function Index() {
           <Text style={styles.sectionValue}>+{reward.totalXp} XP</Text>
         </View>
         <Text style={styles.sectionDescription}>
-          Static daily quests keep the demo reliable: hydrate, sleep well, and log one activity.
+          Quest progress is now derived from the latest `daily_logs` row in Supabase.
         </Text>
       </View>
 
@@ -530,7 +769,7 @@ export default function Index() {
                 { color: quest.completed ? "#45F26A" : "#8A97AD" },
               ]}
             >
-              {quest.completed ? "CLAIMED" : "IN PROGRESS"}
+              {quest.completed ? "SYNCED" : "IN PROGRESS"}
             </Text>
             {quest.completed ? (
               <Ionicons name="checkmark-circle" size={18} color="#45F26A" />
@@ -538,13 +777,6 @@ export default function Index() {
           </View>
         </View>
       ))}
-
-      <View style={styles.aiCard}>
-        <Text style={styles.sectionTitle}>BONUS RULE</Text>
-        <Text style={styles.aiBody}>
-          Completing all three quests grants an extra +20 XP and reinforces the LakadLvL loop for demo day.
-        </Text>
-      </View>
     </View>
   );
 
@@ -552,27 +784,31 @@ export default function Index() {
     <View style={styles.contentStack}>
       <View style={styles.profileCard}>
         <View style={styles.avatarShell}>
-          <Text style={styles.avatarLetter}>L</Text>
+          <Text style={styles.avatarLetter}>
+            {(profile?.username ?? user?.email?.charAt(0) ?? "L").slice(0, 1).toUpperCase()}
+          </Text>
         </View>
-        <Text style={styles.profileName}>{user.username}</Text>
-        <Text style={styles.profileClass}>LakadLvL Remote Worker</Text>
+        <Text style={styles.profileName}>
+          {profile?.username ?? user?.email?.split("@")[0] ?? "LakadLvL User"}
+        </Text>
+        <Text style={styles.profileClass}>{user?.email ?? "Connected through Supabase Auth"}</Text>
       </View>
 
       <View style={styles.summaryStrip}>
         <StatCard label="Current HP" value={`${displayedHp}`} accent={hpColor} suffix="/100" />
-        <StatCard label="Streak" value={`${user.streak}`} accent="#45F26A" suffix="days" />
+        <StatCard label="Streak" value={`${streak}`} accent="#45F26A" suffix="days" />
       </View>
 
       <View style={styles.summaryStrip}>
         <StatCard
           label="Check-ins"
-          value={`${user.totalCheckins}`}
+          value={`${logs.length}`}
           accent="#D7E1F3"
           suffix="saved"
         />
         <StatCard
           label="Distance"
-          value={user.kmTotal.toFixed(1)}
+          value={totalKm.toFixed(1)}
           accent="#C6FF43"
           suffix="km"
         />
@@ -584,81 +820,202 @@ export default function Index() {
           <Text style={styles.levelText}>LVL {level}</Text>
         </View>
         <ProgressBar progress={xpIntoLevel / 100} tint="#C6FF43" />
-        <Text style={styles.metricHint}>
-          {xpIntoLevel} / 100 XP in the current level
-        </Text>
+        <Text style={styles.metricHint}>{xpIntoLevel} / 100 XP in the current level</Text>
       </View>
 
       <View style={styles.sectionCard}>
-        <Text style={styles.sectionTitle}>SUPABASE READY</Text>
+        <Text style={styles.sectionTitle}>BACKEND STATUS</Text>
         <Text style={styles.sectionDescription}>
-          Wire this screen to `users` and `checkins` tables next. The current state model already mirrors your MVP schema.
+          Profile data is fetched from `profiles`, run history comes from `activities`, and
+          daily health data comes from `daily_logs`.
         </Text>
       </View>
     </View>
   );
 
-  return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar style="light" />
-      <View style={styles.screen}>
-        <View style={styles.backgroundGlowTop} />
-        <View style={styles.backgroundGlowBottom} />
-
-        <View style={styles.header}>
-          <View style={styles.brandRow}>
-            <View style={styles.brandIcon}>
-              <Feather name="activity" size={18} color="#06111E" />
-            </View>
-            <View>
-              <Text style={styles.brandName}>LAKADLVL</Text>
-              <Text style={styles.brandSub}>HP + XP FOR REMOTE WORKERS</Text>
-            </View>
-          </View>
-          <View style={styles.headerBadge}>
-            <Ionicons name="sparkles" size={16} color="#C6FF43" />
-          </View>
+  if (authLoading) {
+    return (
+      <ScreenShell>
+        <View style={styles.centerWrap}>
+          <ActivityIndicator size="large" color="#C6FF43" />
+          <Text style={styles.loadingText}>Restoring Supabase session...</Text>
         </View>
+      </ScreenShell>
+    );
+  }
 
+  if (!session) {
+    return (
+      <ScreenShell>
         <ScrollView
           style={styles.scrollView}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
-          {activeTab === "home" && renderHome()}
-          {activeTab === "checkin" && renderCheckIn()}
-          {activeTab === "quests" && renderQuests()}
-          {activeTab === "profile" && renderProfile()}
-        </ScrollView>
+          <View style={styles.contentStack}>
+            <View style={styles.heroCard}>
+              <Text style={styles.heroEyebrow}>Authentication</Text>
+              <View style={styles.scoreFrame}>
+                <Ionicons name="shield-checkmark-outline" size={62} color="#C6FF43" />
+                <Text style={styles.scoreUnit}>SUPABASE AUTH</Text>
+              </View>
+              <Text style={styles.heroNote}>
+                Sign in or create an account to connect the finished frontend to your
+                Supabase backend and persist all MVP fitness data.
+              </Text>
+            </View>
 
-        <View style={styles.tabBar}>
-          {[
-            { key: "home", label: "HOME", icon: "home-outline" },
-            { key: "checkin", label: "CHECK-IN", icon: "create-outline" },
-            { key: "quests", label: "QUESTS", icon: "trophy-outline" },
-            { key: "profile", label: "PROFILE", icon: "person-outline" },
-          ].map((tab) => {
-            const selected = activeTab === tab.key;
-            return (
-              <Pressable
-                key={tab.key}
-                onPress={() => setActiveTab(tab.key as TabKey)}
-                style={[styles.tabItem, selected && styles.tabItemActive]}
-              >
-                <Ionicons
-                  name={tab.icon as keyof typeof Ionicons.glyphMap}
-                  size={20}
-                  color={selected ? "#C6FF43" : "#77839A"}
+            <View style={styles.sectionCard}>
+              <View style={styles.authToggleRow}>
+                <Pressable
+                  onPress={() => setAuthMode("sign-in")}
+                  style={[
+                    styles.authToggle,
+                    authMode === "sign-in" && styles.authToggleActive,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.authToggleText,
+                      authMode === "sign-in" && styles.authToggleTextActive,
+                    ]}
+                  >
+                    Sign In
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setAuthMode("sign-up")}
+                  style={[
+                    styles.authToggle,
+                    authMode === "sign-up" && styles.authToggleActive,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.authToggleText,
+                      authMode === "sign-up" && styles.authToggleTextActive,
+                    ]}
+                  >
+                    Sign Up
+                  </Text>
+                </Pressable>
+              </View>
+
+              {authMode === "sign-up" ? (
+                <View style={styles.inputBlock}>
+                  <Text style={styles.inputLabel}>Username</Text>
+                  <TextInput
+                    value={username}
+                    onChangeText={setUsername}
+                    placeholder="Remote Ranger"
+                    placeholderTextColor="#657288"
+                    autoCapitalize="none"
+                    style={styles.input}
+                  />
+                </View>
+              ) : null}
+
+              <View style={styles.inputBlock}>
+                <Text style={styles.inputLabel}>Email</Text>
+                <TextInput
+                  value={email}
+                  onChangeText={setEmail}
+                  placeholder="you@example.com"
+                  placeholderTextColor="#657288"
+                  autoCapitalize="none"
+                  keyboardType="email-address"
+                  style={styles.input}
                 />
-                <Text style={[styles.tabLabel, selected && styles.tabLabelActive]}>
-                  {tab.label}
+              </View>
+
+              <View style={styles.inputBlock}>
+                <Text style={styles.inputLabel}>Password</Text>
+                <TextInput
+                  value={password}
+                  onChangeText={setPassword}
+                  placeholder="Minimum 6 characters"
+                  placeholderTextColor="#657288"
+                  secureTextEntry
+                  style={styles.input}
+                />
+              </View>
+
+              <Pressable style={styles.primaryButton} onPress={handleAuth} disabled={submittingAuth}>
+                {submittingAuth ? (
+                  <ActivityIndicator color="#08111E" />
+                ) : (
+                  <Ionicons name="log-in-outline" size={18} color="#08111E" />
+                )}
+                <Text style={styles.primaryButtonText}>
+                  {authMode === "sign-up" ? "CREATE ACCOUNT" : "SIGN IN"}
                 </Text>
               </Pressable>
-            );
-          })}
+            </View>
+
+            <View style={styles.summaryCard}>
+              <Text style={styles.summaryText}>{statusMessage}</Text>
+            </View>
+          </View>
+        </ScrollView>
+      </ScreenShell>
+    );
+  }
+
+  return (
+    <ScreenShell
+      headerRight={
+        <Pressable onPress={handleSignOut} style={styles.headerBadge}>
+          <Ionicons name="log-out-outline" size={16} color="#C6FF43" />
+        </Pressable>
+      }
+    >
+      {dashboardLoading && !profile ? (
+        <View style={styles.centerWrap}>
+          <ActivityIndicator size="large" color="#C6FF43" />
+          <Text style={styles.loadingText}>Loading your Supabase dashboard...</Text>
         </View>
-      </View>
-    </SafeAreaView>
+      ) : (
+        <>
+          <ScrollView
+            style={styles.scrollView}
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+          >
+            {activeTab === "home" && renderHome()}
+            {activeTab === "checkin" && renderCheckIn()}
+            {activeTab === "quests" && renderQuests()}
+            {activeTab === "profile" && renderProfile()}
+          </ScrollView>
+
+          <View style={styles.tabBar}>
+            {[
+              { key: "home", label: "HOME", icon: "home-outline" },
+              { key: "checkin", label: "CHECK-IN", icon: "create-outline" },
+              { key: "quests", label: "QUESTS", icon: "trophy-outline" },
+              { key: "profile", label: "PROFILE", icon: "person-outline" },
+            ].map((tab) => {
+              const selected = activeTab === tab.key;
+              return (
+                <Pressable
+                  key={tab.key}
+                  onPress={() => setActiveTab(tab.key as TabKey)}
+                  style={[styles.tabItem, selected && styles.tabItemActive]}
+                >
+                  <Ionicons
+                    name={tab.icon as keyof typeof Ionicons.glyphMap}
+                    size={20}
+                    color={selected ? "#C6FF43" : "#77839A"}
+                  />
+                  <Text style={[styles.tabLabel, selected && styles.tabLabelActive]}>
+                    {tab.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </>
+      )}
+    </ScreenShell>
   );
 }
 
@@ -749,6 +1106,17 @@ const styles = StyleSheet.create({
   contentStack: {
     gap: 18,
   },
+  centerWrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 24,
+    gap: 16,
+  },
+  loadingText: {
+    color: "#DCE3F0",
+    fontSize: 15,
+  },
   heroCard: {
     backgroundColor: "#111C2C",
     borderRadius: 24,
@@ -776,6 +1144,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.35,
     shadowRadius: 24,
     shadowOffset: { width: 0, height: 0 },
+    gap: 8,
   },
   scoreValue: {
     color: "#C6FF43",
@@ -903,57 +1272,6 @@ const styles = StyleSheet.create({
     marginTop: 8,
     fontSize: 15,
   },
-  questPanel: {
-    backgroundColor: "#121C2B",
-    borderRadius: 22,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.06)",
-    gap: 16,
-  },
-  questRow: {
-    flexDirection: "row",
-    gap: 14,
-  },
-  questIconWrap: {
-    width: 54,
-    height: 54,
-    borderRadius: 16,
-    backgroundColor: "#202B3F",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  questMain: {
-    flex: 1,
-    gap: 6,
-  },
-  questTitleRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  questTitle: {
-    color: "#EFF4FD",
-    fontSize: 17,
-    fontWeight: "800",
-    flex: 1,
-    paddingRight: 10,
-  },
-  questXp: {
-    color: "#45F26A",
-    fontWeight: "900",
-    fontSize: 15,
-  },
-  questDescription: {
-    color: "#98A5B9",
-    fontSize: 14,
-    lineHeight: 21,
-  },
-  questProgressLabel: {
-    color: "#DCE3F0",
-    fontSize: 12,
-    fontWeight: "700",
-  },
   sectionCard: {
     backgroundColor: "#131E2E",
     borderRadius: 22,
@@ -1073,6 +1391,33 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     marginBottom: 6,
   },
+  questTitleRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  questTitle: {
+    color: "#EFF4FD",
+    fontSize: 17,
+    fontWeight: "800",
+    flex: 1,
+    paddingRight: 10,
+  },
+  questXp: {
+    color: "#45F26A",
+    fontWeight: "900",
+    fontSize: 15,
+  },
+  questDescription: {
+    color: "#98A5B9",
+    fontSize: 14,
+    lineHeight: 21,
+  },
+  questProgressLabel: {
+    color: "#DCE3F0",
+    fontSize: 12,
+    fontWeight: "700",
+  },
   questDetailCard: {
     backgroundColor: "#1B2434",
     borderRadius: 22,
@@ -1131,9 +1476,34 @@ const styles = StyleSheet.create({
   },
   profileClass: {
     color: "#B7F24A",
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: "700",
     marginTop: 6,
+    textAlign: "center",
+  },
+  authToggleRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  authToggle: {
+    flex: 1,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+    backgroundColor: "#0B1322",
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  authToggleActive: {
+    backgroundColor: "#C6FF43",
+    borderColor: "#C6FF43",
+  },
+  authToggleText: {
+    color: "#DDE5F2",
+    fontWeight: "800",
+  },
+  authToggleTextActive: {
+    color: "#07111F",
   },
   tabBar: {
     position: "absolute",

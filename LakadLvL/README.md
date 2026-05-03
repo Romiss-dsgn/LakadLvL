@@ -1,50 +1,43 @@
-# Welcome to your Expo app 👋
+# LakadLvL MVP Backend Integration
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+This Expo frontend is now wired for a simple Supabase-backed MVP:
 
-## Get started
+- Supabase Auth for sign up, sign in, and session persistence
+- `profiles` for user data with HP and XP
+- `activities` for completed runs
+- `daily_logs` for daily health check-ins
+- RPC functions to update HP and XP
 
-1. Install dependencies
+## Supabase setup
 
-   ```bash
-   npm install
-   ```
-
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+1. Create a Supabase project.
+2. Open the SQL editor and run [supabase/mvp_schema.sql](./supabase/mvp_schema.sql).
+3. Copy [.env.example](./.env.example) to `.env` and set:
 
 ```bash
-npm run reset-project
+EXPO_PUBLIC_SUPABASE_URL=...
+EXPO_PUBLIC_SUPABASE_ANON_KEY=...
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+## Local run
 
-## Learn more
+```bash
+npm install
+npx expo start
+```
 
-To learn more about developing your project with Expo, look at the following resources:
+## Connected app flows
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+- Authentication uses Supabase Auth directly from the Expo app.
+- Saving a run inserts into `activities` and calls `add_profile_xp`.
+- Saving a daily check-in upserts into `daily_logs` and calls `add_profile_hp`.
+- The home and profile screens fetch live data from `profiles`, `activities`, and `daily_logs`.
 
-## Join the community
+## Verification
 
-Join our community of developers creating universal apps.
+These checks pass in the current project:
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+```bash
+npm run lint
+npx tsc --noEmit
+```
