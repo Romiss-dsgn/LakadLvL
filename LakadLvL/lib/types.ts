@@ -40,6 +40,7 @@ export type Database = {
         Row: {
           activity: string;
           activity_km: number;
+          ai_advice: string | null;
           created_at: string;
           health_score: number;
           id: number;
@@ -52,6 +53,7 @@ export type Database = {
         Insert: {
           activity: string;
           activity_km?: number;
+          ai_advice?: string | null;
           created_at?: string;
           health_score: number;
           id?: number;
@@ -64,6 +66,7 @@ export type Database = {
         Update: {
           activity?: string;
           activity_km?: number;
+          ai_advice?: string | null;
           created_at?: string;
           health_score?: number;
           id?: number;

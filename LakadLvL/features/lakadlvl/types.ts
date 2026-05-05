@@ -35,3 +35,16 @@ export type AiInsight = {
   body: string;
   tag: string;
 };
+
+export type StoryInsight = {
+  title: string;
+  body: string;
+  trend: "recovery" | "warning" | "steady";
+};
+
+export type StoryDay = {
+  dayLabel: string;
+  hp: number;
+  mood: number;
+  sleepHours: number;
+};

@@ -3,7 +3,12 @@ import { Text, View } from "react-native";
 
 import { ProgressBar } from "../components/ProgressBar";
 import { styles } from "../styles";
-import type { AiInsight, QuestProgress } from "../types";
+import type {
+  AiInsight,
+  QuestProgress,
+  StoryDay,
+  StoryInsight,
+} from "../types";
 
 type HomeTabProps = {
   aiInsight: AiInsight;
@@ -11,9 +16,12 @@ type HomeTabProps = {
   displayedHp: number;
   healthScore?: number;
   hpColor: string;
+  isAiLoading: boolean;
   level: number;
   quests: QuestProgress[];
   rewardCompletedCount: number;
+  storyDays: StoryDay[];
+  storyInsight: StoryInsight;
   xpIntoLevel: number;
 };
 
@@ -23,9 +31,12 @@ export function HomeTab({
   displayedHp,
   healthScore,
   hpColor,
+  isAiLoading,
   level,
   quests,
   rewardCompletedCount,
+  storyDays,
+  storyInsight,
   xpIntoLevel,
 }: HomeTabProps) {
   return (
@@ -37,8 +48,8 @@ export function HomeTab({
           <Text style={styles.scoreUnit}>TODAY SCORE</Text>
         </View>
         <Text style={styles.heroNote}>
-          LakadLvL turns daily habits into survivability. Keep HP alive, stack XP,
-          and protect your streak.
+          This is your command center. Everything reacts to one thing: your daily
+          check-in.
         </Text>
       </View>
 
@@ -81,8 +92,67 @@ export function HomeTab({
             <Text style={styles.aiBadgeText}>{aiInsight.tag}</Text>
           </View>
         </View>
-        <Text style={styles.aiTitle}>{aiInsight.title}</Text>
-        <Text style={styles.aiBody}>{aiInsight.body}</Text>
+        <Text style={styles.aiTitle}>
+          {isAiLoading ? "Generating AI Guidance..." : aiInsight.title}
+        </Text>
+        <Text style={styles.aiBody}>
+          {isAiLoading
+            ? "LakadLvL is analyzing today's check-in and preparing a focused recommendation for your energy, health, and work rhythm."
+            : aiInsight.body}
+        </Text>
+      </View>
+
+      <View style={styles.storyCard}>
+        <View style={styles.sectionHeaderRow}>
+          <Text style={styles.sectionTitle}>RECOVERY STORY</Text>
+          <Text
+            style={[
+              styles.storyTrend,
+              storyInsight.trend === "recovery"
+                ? styles.storyTrendRecovery
+                : storyInsight.trend === "warning"
+                  ? styles.storyTrendWarning
+                  : styles.storyTrendSteady,
+            ]}
+          >
+            {storyInsight.trend.toUpperCase()}
+          </Text>
+        </View>
+        <Text style={styles.storyTitle}>{storyInsight.title}</Text>
+        <Text style={styles.storyBody}>{storyInsight.body}</Text>
+
+        <View style={styles.storyTimeline}>
+          {storyDays.length ? (
+            storyDays.map((day) => (
+              <View
+                key={`${day.dayLabel}-${day.hp}-${day.mood}`}
+                style={styles.storyDayCard}
+              >
+                <Text style={styles.storyDayLabel}>{day.dayLabel}</Text>
+                <View
+                  style={[
+                    styles.storyDayBar,
+                    {
+                      height: Math.max(18, Math.round((day.hp / 100) * 72)),
+                      backgroundColor:
+                        day.hp >= 75
+                          ? "#C6FF43"
+                          : day.hp >= 50
+                            ? "#F8D866"
+                            : "#FF7C8A",
+                    },
+                  ]}
+                />
+                <Text style={styles.storyDayValue}>{day.hp}</Text>
+              </View>
+            ))
+          ) : (
+            <Text style={styles.storyEmpty}>
+              Build a few days of check-ins and LakadLvL will turn them into a
+              visible recovery arc.
+            </Text>
+          )}
+        </View>
       </View>
 
       <View style={styles.questPanel}>

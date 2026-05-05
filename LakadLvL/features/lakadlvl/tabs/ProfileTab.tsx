@@ -1,4 +1,4 @@
-import { Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 
 import { ProgressBar } from "../components/ProgressBar";
 import { StatCard } from "../components/StatCard";
@@ -8,7 +8,10 @@ import type { UserState } from "../types";
 type ProfileTabProps = {
   displayedHp: number;
   hpColor: string;
+  isSeedingDemo?: boolean;
   level: number;
+  onLoadDemoHistory: () => void;
+  onLogout: () => void;
   user: UserState;
   xpIntoLevel: number;
 };
@@ -16,7 +19,10 @@ type ProfileTabProps = {
 export function ProfileTab({
   displayedHp,
   hpColor,
+  isSeedingDemo,
   level,
+  onLoadDemoHistory,
+  onLogout,
   user,
   xpIntoLevel,
 }: ProfileTabProps) {
@@ -70,12 +76,26 @@ export function ProfileTab({
       </View>
 
       <View style={styles.sectionCard}>
-        <Text style={styles.sectionTitle}>SUPABASE READY</Text>
+        <Text style={styles.sectionTitle}>LIVE SYNC</Text>
         <Text style={styles.sectionDescription}>
-          Wire this screen to `users` and `checkins` tables next. The current state
-          model already mirrors your MVP schema.
+          Your HP, XP, and daily check-ins now load from Supabase and persist
+          across app reloads.
         </Text>
       </View>
+
+      <Pressable
+        style={[styles.secondaryButton, isSeedingDemo && styles.primaryButtonDisabled]}
+        onPress={onLoadDemoHistory}
+        disabled={isSeedingDemo}
+      >
+        <Text style={styles.secondaryButtonText}>
+          {isSeedingDemo ? "LOADING DEMO STORY..." : "LOAD DEMO HISTORY"}
+        </Text>
+      </Pressable>
+
+      <Pressable style={styles.secondaryButton} onPress={onLogout}>
+        <Text style={styles.secondaryButtonText}>LOG OUT</Text>
+      </Pressable>
     </View>
   );
 }

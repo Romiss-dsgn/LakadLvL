@@ -1,244 +1,203 @@
-# LakadLvL — MVP Plan (5-Day Hackathon)
+# LakadLvL MVP Plan
 
-## 🎯 Concept
+## Concept
 
-A gamified health + productivity app for remote workers.
-Users maintain **HP (health)** and gain **XP (progress)** through daily habits.
-Enhanced with **AI coaching (Gemini)** to provide personalized insights and guidance.
+LakadLvL is a gamified AI health coach for remote workers.
+Users protect their HP, gain XP through daily habits, and receive coaching that reacts to their real check-in data.
 
----
+The product pitch is simple:
 
-## 🧩 Core Features (ONLY 4 — includes AI)
+"You cannot build from anywhere if you are running on empty."
 
-### 1. 🎮 HP + XP System
+## Core Product
 
-- HP (0–100):
-  - -5/day if no check-in
-  - +10 if full check-in completed
+### 1. HP + XP System
 
-- XP:
-  - +10 per completed habit
-  - Level up every 100 XP
+- HP is the health resource that reflects recovery and consistency.
+- XP is earned through completing daily habits and quests.
+- Level increases every 100 XP.
+- The home dashboard shows:
+  - HP bar
+  - XP bar
+  - Level
+  - Daily quest progress
 
-- UI:
-  - HP bar (green → red)
-  - XP progress bar / level indicator
+### 2. Daily Check-in
 
----
-
-### 2. 📝 Daily Check-in
-
-User inputs (once per day):
-
-- Sleep hours
-- Water intake (liters)
-- Mood (1–5 scale)
-- Activity (text or simple km input)
-
-Logic:
-
-- Save entry to database
-- Calculate “Health Score”
-- Trigger HP/XP update
-
----
-
-### 3. 🎯 Daily Quests
-
-Static (simple, reliable):
-
-- Drink 2L water
-- Sleep ≥ 7 hours
-- Log 1 activity
-
-Logic:
-
-- Each quest = +10 XP
-- Completing all = bonus +20 XP
-- Visual checkmarks on completion
-
----
-
-### 4. 🤖 AI Coach (Gemini) — **WINNING FEATURE**
-
-Turns the app from tracker → intelligent assistant.
-
-#### Purpose
-
-Provide **personalized, actionable health & productivity advice** based on user check-in.
-
-#### When it runs
-
-- AFTER user submits daily check-in (1 API call/day only)
-
-#### Input (from app)
+The user submits one check-in per day with:
 
 - Sleep hours
 - Water intake
+- Mood score
+- Activity log
+- Optional movement distance
+
+On submit, the app:
+
+- Calculates a health score
+- Saves the check-in to Supabase
+- Updates HP and XP
+- Generates AI advice
+
+### 3. Daily Quests
+
+Static quests keep the MVP reliable:
+
+- Drink 2L water
+- Sleep at least 7 hours
+- Log 1 activity
+
+Rewards:
+
+- +10 XP per completed quest
+- +20 XP bonus for completing all 3
+
+### 4. AI Coach
+
+The AI coach is the key differentiator.
+
+It runs after check-in and returns short, practical coaching based on:
+
+- Sleep
+- Water
 - Mood
 - Activity
 
-#### Output (shown in UI)
+Target output:
 
-Short advice card:
+- 2 to 3 sentences
+- Specific
+- Actionable
+- Encouraging without sounding generic
 
-- 2–3 sentences
-- Specific + actionable
-- Encouraging tone
+Example:
 
-#### Example Output
+"You slept only 5 hours and your energy is likely low. Try a 10-minute walk before noon and drink at least 1.5L today. Protect your focus hours by avoiding meetings early if possible."
 
-“You slept only 5 hours and logged low hydration. Try aiming for 7 hours tonight and drink at least 1.5L earlier in the day. A short walk may help improve your mood.”
+## Current Implementation Status
 
----
+### Implemented
 
-## 🧠 Gemini Integration (Correct + Winning Usage)
+- Expo React Native frontend with modular feature structure
+- Supabase auth-based login flow
+- Supabase-backed `profiles` and `daily_logs`
+- HP / XP calculation and persistence
+- AI coach client integration through Supabase Edge Functions
+- Recovery story card on the home screen
+- Demo history seeding for a 4-day burnout-to-recovery arc
 
-### ✅ Why this works
+### In Progress / Conditional
 
-- Context-aware (uses real user data)
-- Minimal API calls (fast + reliable)
-- High demo impact (“AI insight” moment)
+- Live Gemini only works when:
+  - `ai-coach` edge function is deployed
+  - `GEMINI_API_KEY` is configured in Supabase secrets
 
-### ❌ Avoid
+If the edge function is unavailable, the app falls back to local coaching text.
 
-- Generic chatbot
-- Multiple API calls per screen
-- Overly long responses
+## Current Data Model
 
----
+### `profiles`
 
-## 🔧 Gemini Implementation
+- `id`
+- `username`
+- `hp`
+- `xp`
+- `created_at`
+- `updated_at`
 
-### Backend (API / Edge Function)
+### `activities`
 
-- Store API key securely (DO NOT expose in frontend)
-- Create endpoint: `/api/ai-coach`
+- `id`
+- `user_id`
+- `title`
+- `distance_km`
+- `xp_earned`
+- `completed_at`
 
-### Prompt Template
+### `daily_logs`
 
-```
-You are a health and productivity coach for remote workers.
+- `id`
+- `user_id`
+- `log_date`
+- `sleep_hours`
+- `water_intake`
+- `mood`
+- `activity`
+- `activity_km`
+- `health_score`
+- `ai_advice`
+- `created_at`
 
-User data:
-- Sleep: {sleep} hours
-- Water: {water} liters
-- Mood: {mood}/5
-- Activity: {activity}
+## Demo Flow
 
-Give short, actionable advice (2-3 sentences).
-Focus on improving energy, health, and productivity.
-Be encouraging but practical.
-```
+### Launch
 
-### Flow
+- App opens with LakadLvL branding
+- Tagline: `Level up your health. Build from anywhere.`
 
-User submits check-in → Save to DB → Call Gemini → Return advice → Display in UI
+### Login
 
----
+- User signs in or creates an account
+- Session persists through Supabase auth
 
-## 🛠️ Tech Stack
+### Home Dashboard
 
-- Frontend: React Native (Expo)
-- Backend: Supabase (Auth + DB)
-- AI: Gemini API (via Node API / Edge Function)
-- State: Zustand or Context API
+The judge immediately sees:
 
----
+- HP
+- XP
+- Level
+- Daily quests
+- AI coach card
+- Recovery story card
 
-## 🗃️ Database (Minimal)
+### Check-in
 
-### users
+User logs:
 
-- id
-- username
-- hp
-- xp
-- level
-
-### checkins
-
-- id
-- user_id
-- sleep_hours
-- water_intake
+- sleep
+- water
 - mood
 - activity
-- ai_advice (text)
-- created_at
 
----
+### AI Moment
 
-## 📅 5-Day Sprint Plan
+After submit:
 
-### Day 1 — Setup
+- check-in is saved
+- HP / XP update
+- quests progress
+- AI coach appears
 
-- Initialize Expo app
-- Setup Supabase (Auth + DB)
-- Create navigation (Home, Check-in, Profile)
+### Narrative Layer
 
----
+Optional demo enhancement:
 
-### Day 2 — Check-in Feature
+- load demo history from the profile screen
+- show a 4-day burnout-to-recovery story
+- let the recovery story card support the spoken pitch
 
-- Build check-in form
-- Save data to DB
-- Compute health score
+## Recommended Demo Strategy
 
----
+For the strongest hackathon presentation:
 
-### Day 3 — HP + XP System
+1. Use the seeded demo history first so the app already has a visible arc.
+2. Show the home dashboard and explain HP as the cost of neglect.
+3. Submit one live check-in.
+4. Show AI advice update in real time.
+5. Return to the recovery story and explain the human impact.
 
-- Implement HP/XP logic
-- Display HP bar + XP progress
-- Level system
+## Tech Stack
 
----
+- Frontend: Expo + React Native
+- Backend: Supabase
+- Auth: Supabase Auth
+- Database: Supabase Postgres
+- AI: Gemini via Supabase Edge Function
+- State: local React state backed by Supabase reads/writes
 
-### Day 4 — Quests + Gemini
+## Repo Notes
 
-- Implement 3 static quests
-- Create `/api/ai-coach` endpoint
-- Integrate Gemini API
-- Show AI advice card after check-in
-
----
-
-### Day 5 — Polish + Demo
-
-- Home dashboard:
-  - HP bar
-  - XP ring
-  - Quest list
-  - 🤖 AI advice card (highlight)
-
-- Seed demo data
-- Full demo flow testing
-- Prepare pitch
-
----
-
-## 🎤 Demo Flow (IMPORTANT)
-
-1. User logs in
-2. Completes daily check-in
-3. Quests auto-complete
-4. HP increases + XP gained
-5. 🤖 AI Coach appears with personalized advice ← **WOW MOMENT**
-6. Level-up animation
-
----
-
-## 🧠 Notes
-
-- Prioritize **working flow over features**
-- Gemini = **1 call per check-in only**
-- AI advice must feel **personalized, not generic**
-- Focus on **smooth demo + clear value**
-
----
-
-## 🏁 Winning Edge
-
-“LakadLvL doesn’t just track your habits — it guides you.
-With AI-powered coaching, it helps remote workers stay healthy, focused, and productive anywhere.”
+- App code lives in `LakadLvL/`
+- Supabase schema lives in `LakadLvL/supabase/mvp_schema.sql`
+- Edge Function code lives in `LakadLvL/supabase/functions/ai-coach/index.ts`

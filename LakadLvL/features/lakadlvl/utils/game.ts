@@ -87,9 +87,9 @@ export const getAiInsight = (
 ): AiInsight => {
   if (!entry) {
     return {
-      title: "AI Coach Standby",
-      body: "Complete your first check-in and I'll translate your sleep, water, mood, and movement into a recovery plan.",
-      tag: "Awaiting data",
+      title: "Awaiting Daily Check-In",
+      body: "Complete today's check-in to unlock a personalized AI coaching response based on your sleep, hydration, mood, and activity.",
+      tag: "Waiting",
     };
   }
 

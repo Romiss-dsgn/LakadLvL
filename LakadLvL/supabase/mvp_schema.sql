@@ -26,9 +26,13 @@ create table if not exists public.daily_logs (
   activity text not null,
   activity_km numeric(6,2) not null default 0 check (activity_km >= 0),
   health_score integer not null check (health_score between 0 and 100),
+  ai_advice text,
   created_at timestamptz not null default timezone('utc', now()),
   unique (user_id, log_date)
 );
+
+alter table public.daily_logs
+add column if not exists ai_advice text;
 
 create or replace function public.handle_new_user()
 returns trigger

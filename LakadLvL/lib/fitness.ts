@@ -11,6 +11,68 @@ export type DashboardData = {
   profile: Profile;
 };
 
+function getQuestXpFromLog(values: {
+  activity: string;
+  sleepHours: number;
+  waterIntake: number;
+}) {
+  const completedCount = [
+    values.waterIntake >= 2,
+    values.sleepHours >= 7,
+    values.activity.trim().length > 0,
+  ].filter(Boolean).length;
+  const baseXp = completedCount * 10;
+  const bonusXp = completedCount === 3 ? 20 : 0;
+
+  return {
+    completedCount,
+    totalXp: baseXp + bonusXp,
+  };
+}
+
+const demoHistorySeed = [
+  {
+    activity: "Skipped movement and worked late",
+    activityKm: 0,
+    aiAdvice:
+      "You are depleted. Strip the day down to essentials, hydrate earlier, and protect your evening so you can recover sleep tonight.",
+    dayOffset: 4,
+    mood: 1,
+    sleepHours: 4.5,
+    waterIntake: 0.8,
+  },
+  {
+    activity: "Sat through meetings all day",
+    activityKm: 0,
+    aiAdvice:
+      "This looks like a second low-energy day in a row. A short walk and an earlier shutdown will do more for tomorrow than pushing harder tonight.",
+    dayOffset: 3,
+    mood: 2,
+    sleepHours: 5.2,
+    waterIntake: 1.0,
+  },
+  {
+    activity: "Took a 10-minute walk after lunch",
+    activityKm: 0.7,
+    aiAdvice:
+      "You are starting to recover. Keep the movement light, hit your water target, and aim for at least 7 hours tonight to keep the rebound going.",
+    dayOffset: 2,
+    mood: 3,
+    sleepHours: 6.4,
+    waterIntake: 1.8,
+  },
+  {
+    activity: "Walked before dinner and logged off on time",
+    activityKm: 1.4,
+    aiAdvice:
+      "Recovery is visible now. Protect this rhythm by keeping your first work block focused and preserving the sleep gain tonight.",
+    dayOffset: 1,
+    mood: 4,
+    sleepHours: 7.3,
+    waterIntake: 2.2,
+  },
+] as const;
+
 export const calculateHealthScore = (
   sleepHours: number,
   waterIntake: number,
@@ -122,11 +184,17 @@ export async function submitDailyCheckin(
   values: {
     activity: string;
     activityKm: number;
+    aiAdvice?: string | null;
     mood: number;
     sleepHours: number;
     waterIntake: number;
   }
-): Promise<{ awardedHp: boolean; latestLog: DailyLog; profile: Profile }> {
+): Promise<{
+  awardedHp: boolean;
+  gainedXp: number;
+  latestLog: DailyLog;
+  profile: Profile;
+}> {
   const healthScore = calculateHealthScore(
     values.sleepHours,
     values.waterIntake,
@@ -136,7 +204,7 @@ export async function submitDailyCheckin(
 
   const { data: existingLog, error: existingLogError } = await supabase
     .from("daily_logs")
-    .select("id")
+    .select("id, activity, sleep_hours, water_intake")
     .eq("user_id", userId)
     .eq("log_date", TODAY_KEY)
     .maybeSingle();
@@ -157,6 +225,7 @@ export async function submitDailyCheckin(
         activity: values.activity.trim(),
         activity_km: values.activityKm,
         health_score: healthScore,
+        ai_advice: values.aiAdvice ?? null,
       },
       {
         onConflict: "user_id,log_date",
@@ -169,10 +238,24 @@ export async function submitDailyCheckin(
     throw logError;
   }
 
-  let profileData: Profile[] | null = null;
+  const previousQuestXp = existingLog
+    ? getQuestXpFromLog({
+        activity: existingLog.activity,
+        sleepHours: existingLog.sleep_hours,
+        waterIntake: existingLog.water_intake,
+      }).totalXp
+    : 0;
+
+  const nextQuestXp = getQuestXpFromLog({
+    activity: values.activity,
+    sleepHours: values.sleepHours,
+    waterIntake: values.waterIntake,
+  }).totalXp;
+
+  const gainedXp = Math.max(0, nextQuestXp - previousQuestXp);
 
   if (!existingLog) {
-    const { data, error: hpError } = await supabase.rpc("add_profile_hp", {
+    const { error: hpError } = await supabase.rpc("add_profile_hp", {
       user_id: userId,
       hp_to_add: DAILY_HP_REWARD,
     });
@@ -180,23 +263,28 @@ export async function submitDailyCheckin(
     if (hpError) {
       throw hpError;
     }
-
-    profileData = data;
-  } else {
-    const { data, error: profileError } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", userId)
-      .single();
-
-    if (profileError) {
-      throw profileError;
-    }
-
-    profileData = [data];
   }
 
-  const updatedProfile = profileData?.[0];
+  if (gainedXp > 0) {
+    const { error: xpError } = await supabase.rpc("add_profile_xp", {
+      user_id: userId,
+      xp_to_add: gainedXp,
+    });
+
+    if (xpError) {
+      throw xpError;
+    }
+  }
+
+  const { data: updatedProfile, error: profileError } = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("id", userId)
+    .single();
+
+  if (profileError) {
+    throw profileError;
+  }
 
   if (!updatedProfile) {
     throw new Error("HP update did not return an updated profile.");
@@ -204,7 +292,100 @@ export async function submitDailyCheckin(
 
   return {
     awardedHp: !existingLog,
+    gainedXp,
     latestLog: logData,
     profile: updatedProfile,
   };
+}
+
+export async function seedDemoHistory(userId: string): Promise<Profile> {
+  const existingDates = demoHistorySeed.map((entry) => {
+    const date = new Date();
+    date.setDate(date.getDate() - entry.dayOffset);
+    return date.toISOString().slice(0, 10);
+  });
+
+  const { data: existingLogs, error: existingLogsError } = await supabase
+    .from("daily_logs")
+    .select("log_date")
+    .eq("user_id", userId)
+    .in("log_date", existingDates);
+
+  if (existingLogsError) {
+    throw existingLogsError;
+  }
+
+  const existingDateSet = new Set((existingLogs ?? []).map((log) => log.log_date));
+
+  const logsToInsert = demoHistorySeed
+    .filter((entry) => {
+      const date = new Date();
+      date.setDate(date.getDate() - entry.dayOffset);
+      return !existingDateSet.has(date.toISOString().slice(0, 10));
+    })
+    .map((entry) => {
+      const logDate = new Date();
+      logDate.setDate(logDate.getDate() - entry.dayOffset);
+
+      return {
+        user_id: userId,
+        log_date: logDate.toISOString().slice(0, 10),
+        sleep_hours: entry.sleepHours,
+        water_intake: entry.waterIntake,
+        mood: entry.mood,
+        activity: entry.activity,
+        activity_km: entry.activityKm,
+        health_score: calculateHealthScore(
+          entry.sleepHours,
+          entry.waterIntake,
+          entry.mood,
+          entry.activityKm
+        ),
+        ai_advice: entry.aiAdvice,
+      };
+    });
+
+  if (logsToInsert.length) {
+    const { error: insertError } = await supabase
+      .from("daily_logs")
+      .insert(logsToInsert);
+
+    if (insertError) {
+      throw insertError;
+    }
+
+    const gainedXp = logsToInsert.reduce((total, log) => {
+      return (
+        total +
+        getQuestXpFromLog({
+          activity: log.activity,
+          sleepHours: log.sleep_hours,
+          waterIntake: log.water_intake,
+        }).totalXp
+      );
+    }, 0);
+
+    if (gainedXp > 0) {
+      const { error: xpError } = await supabase.rpc("add_profile_xp", {
+        user_id: userId,
+        xp_to_add: gainedXp,
+      });
+
+      if (xpError) {
+        throw xpError;
+      }
+    }
+  }
+
+  const { data: profile, error: profileError } = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("id", userId)
+    .single();
+
+  if (profileError) {
+    throw profileError;
+  }
+
+  return profile;
 }

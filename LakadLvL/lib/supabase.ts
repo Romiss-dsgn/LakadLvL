@@ -6,8 +6,15 @@ import { Platform } from "react-native";
 
 import type { Database } from "@/lib/types";
 
-const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+const rawSupabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+
+const supabaseUrl =
+  rawSupabaseUrl && /^https?:\/\//i.test(rawSupabaseUrl)
+    ? rawSupabaseUrl
+    : rawSupabaseUrl
+      ? `https://${rawSupabaseUrl}.supabase.co`
+      : undefined;
 
 if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error(

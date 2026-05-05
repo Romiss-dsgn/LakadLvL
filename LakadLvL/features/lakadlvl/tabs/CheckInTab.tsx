@@ -7,12 +7,13 @@ type CheckInTabProps = {
   activity: string;
   activityKm: string;
   healthScore?: number;
+  isSubmitting: boolean;
   mood: number;
   onActivityChange: (value: string) => void;
   onActivityKmChange: (value: string) => void;
   onMoodChange: (value: number) => void;
   onSleepChange: (value: string) => void;
-  onSubmit: () => void;
+  onSubmit: () => Promise<void> | void;
   onWaterChange: (value: string) => void;
   sleepHours: string;
   statusMessage: string;
@@ -23,6 +24,7 @@ export function CheckInTab({
   activity,
   activityKm,
   healthScore,
+  isSubmitting,
   mood,
   onActivityChange,
   onActivityKmChange,
@@ -39,12 +41,12 @@ export function CheckInTab({
       <View style={styles.sectionCard}>
         <Text style={styles.sectionTitle}>DAILY CHECK-IN</Text>
         <Text style={styles.sectionDescription}>
-          Log sleep, water, mood, and movement once per day to stabilize HP and
-          unlock quest XP.
+          Log one daily check-in to drive the entire system: HP, XP, quests, and
+          your AI coach response.
         </Text>
 
         <View style={styles.inputBlock}>
-          <Text style={styles.inputLabel}>Sleep hours</Text>
+          <Text style={styles.inputLabel}>😴 Sleep hours</Text>
           <TextInput
             value={sleepHours}
             onChangeText={onSleepChange}
@@ -56,7 +58,7 @@ export function CheckInTab({
         </View>
 
         <View style={styles.inputBlock}>
-          <Text style={styles.inputLabel}>Water intake (liters)</Text>
+          <Text style={styles.inputLabel}>💧 Water intake (liters)</Text>
           <TextInput
             value={waterIntake}
             onChangeText={onWaterChange}
@@ -68,7 +70,7 @@ export function CheckInTab({
         </View>
 
         <View style={styles.inputBlock}>
-          <Text style={styles.inputLabel}>Mood</Text>
+          <Text style={styles.inputLabel}>😐 Mood</Text>
           <View style={styles.moodRow}>
             {[1, 2, 3, 4, 5].map((value) => (
               <Pressable
@@ -90,7 +92,7 @@ export function CheckInTab({
         </View>
 
         <View style={styles.inputBlock}>
-          <Text style={styles.inputLabel}>Activity log</Text>
+          <Text style={styles.inputLabel}>🏃 Activity log</Text>
           <TextInput
             value={activity}
             onChangeText={onActivityChange}
@@ -101,7 +103,7 @@ export function CheckInTab({
         </View>
 
         <View style={styles.inputBlock}>
-          <Text style={styles.inputLabel}>Activity distance (km)</Text>
+          <Text style={styles.inputLabel}>Distance (km)</Text>
           <TextInput
             value={activityKm}
             onChangeText={onActivityKmChange}
@@ -112,9 +114,17 @@ export function CheckInTab({
           />
         </View>
 
-        <Pressable style={styles.primaryButton} onPress={onSubmit}>
+        <Pressable
+          style={[styles.primaryButton, isSubmitting && styles.primaryButtonDisabled]}
+          onPress={() => {
+            void onSubmit();
+          }}
+          disabled={isSubmitting}
+        >
           <Ionicons name="flash-outline" size={18} color="#08111E" />
-          <Text style={styles.primaryButtonText}>SAVE CHECK-IN</Text>
+          <Text style={styles.primaryButtonText}>
+            {isSubmitting ? "PROCESSING..." : "SAVE CHECK-IN"}
+          </Text>
         </Pressable>
       </View>
 
